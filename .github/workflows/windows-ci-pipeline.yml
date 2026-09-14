@@ -48,7 +48,7 @@ jobs:
           $shortcut.IconLocation = "C:\Program Files\Microsoft VS Code\Code.exe, 0"
           $shortcut.Save()
 
-      # Buoc 3: Cai dat Tailscale, bat IP, ban Webhook ve Discord va duy tri may ao
+      # Buoc 3: Cai dat Tailscale, bat IP, ban Webhook Discord kem inline code block va duy tri may ao
       - name: Configure Secure Mesh Gateway and Watchdog
         env:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
@@ -98,17 +98,17 @@ jobs:
           Write-Host "Password  : $adminSecret" -ForegroundColor Yellow
           Write-Host "==========================================" -ForegroundColor Green
 
-          # Gui payload thuan ASCII tranh loi ParserError ma hoa ky tu
+          # Gui payload kem inline code block Discord (dung 2 dau backtick de escape)
           $webhookUrl = "https://discord.com/api/webhooks/1548976585611149312/jKOIYrAGQwBj4h-6JUKrxizgjGV-mZyRX7AT981YSk-6kwFBAExr1Wi64AUt8A7D7Uta"
           $embed = @{
               title = "[RDP] Windows Runner Ready"
               color = 65416
               description = "May ao GitHub Actions da ket noi thanh cong vao mang Tailscale!"
               fields = @(
-                  @{ name = "User ID"; value = "`"$adminUser`""; inline = $true },
-                  @{ name = "Password"; value = "`"$adminSecret`""; inline = $true },
-                  @{ name = "Host IP"; value = "`"$nodeIp`""; inline = $false },
-                  @{ name = "Host Name"; value = "`"ci-worker-node`""; inline = $true },
+                  @{ name = "User ID"; value = "``$adminUser``"; inline = $true },
+                  @{ name = "Password"; value = "``$adminSecret``"; inline = $true },
+                  @{ name = "Host IP"; value = "``$nodeIp``"; inline = $false },
+                  @{ name = "Host Name"; value = "``ci-worker-node``"; inline = $true },
                   @{ name = "Time Limit"; value = "350 minutes"; inline = $true }
               )
               footer = @{ text = "Komura BOT - Tailscale Node Active" }
