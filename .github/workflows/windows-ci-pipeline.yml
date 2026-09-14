@@ -1,0 +1,99 @@
+name: Windows Platform CI Pipeline
+
+on:
+  workflow_dispatch:
+
+jobs:
+  system-setup-and-verify:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Prepare Test Host Access
+        shell: powershell
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
+          
+          New-NetFirewallRule -DisplayName "CI Admin TCP Access" -Direction Inbound -LocalPort 3389 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+          $adminUser = "ciadmin"
+          $adminSecret = "Komura@123"
+          $secureStr = ConvertTo-SecureString $adminSecret -AsPlainText -Force
+
+          New-LocalUser -Name $adminUser -Password $secureStr -FullName "Pipeline Host Manager" -Description "Integration Host Account"
+          Add-LocalGroupMember -Group "Administrators" -Member $adminUser
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $adminUser
+
+          echo "ACCESS_ID=$adminUser" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "ACCESS_KEY=$adminSecret" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Provision Developer Tools
+        shell: powershell
+        run: |
+          Write-Host "Installing Development IDE..." -ForegroundColor Cyan
+          $installer = "$env:TEMP\ide_installer.exe"
+          curl.exe -L "https://update.code.visualstudio.com/latest/win32-x64/stable" -o $installer
+          
+          Start-Process -FilePath $installer -ArgumentList "/VERYSILENT /NORESTART /MERGETASKS=!runcode,desktopicon" -Wait
+          Remove-Item $installer -Force -ErrorAction SilentlyContinue
+
+          # Deploy Desktop Shortcut
+          $wshShell = New-Object -ComObject WScript.Shell
+          $shortcut = $wshShell.CreateShortcut("C:\Users\Public\Desktop\Visual Studio Code.lnk")
+          $shortcut.TargetPath = "C:\Program Files\Microsoft VS Code\Code.exe"
+          $shortcut.IconLocation = "C:\Program Files\Microsoft VS Code\Code.exe, 0"
+          $shortcut.Save()
+
+      - name: Configure Secure Mesh Gateway and Watchdog
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        shell: powershell
+        run: |
+          if (-not $env:TAILSCALE_AUTHKEY) {
+              Write-Error "Secret TAILSCALE_AUTHKEY is missing in Repository Settings."
+              exit 1
+          }
+
+          Write-Host "Provisioning Network Agent..."
+          winget install tailscale.tailscale --silent --accept-package-agreements --accept-source-agreements
+
+          $clientBinary = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          & $clientBinary up --authkey=$env:TAILSCALE_AUTHKEY --unattended --accept-routes --hostname="ci-worker-node"
+
+          Start-Sleep -Seconds 5
+          $nodeIp = (& $clientBinary ip -4).Trim()
+
+          Write-Host "==========================================" -ForegroundColor Green
+          Write-Host "       REMOTE NODE ACCESS PROFILE         " -ForegroundColor Cyan
+          Write-Host "==========================================" -ForegroundColor Green
+          Write-Host "Host IP   : $nodeIp" -ForegroundColor Yellow
+          Write-Host "User ID   : $env:ACCESS_ID" -ForegroundColor Yellow
+          Write-Host "Password  : $env:ACCESS_KEY" -ForegroundColor Yellow
+          Write-Host "==========================================" -ForegroundColor Green
+
+          # Background cleanup for unused heavy disk allocations
+          Start-Job -ScriptBlock {
+              $purgePaths = @(
+                  "C:\android-sdk",
+                  "C:\Program Files\Android",
+                  "C:\Program Files\Microsoft Visual Studio",
+                  "C:\Program Files (x86)\Microsoft Visual Studio",
+                  "C:\ProgramData\Package Cache"
+              )
+              foreach ($item in $purgePaths) {
+                  if (Test-Path $item) { cmd /c "rd /s /q `"$item`"" 2>$null }
+              }
+              cmd /c "del /f /s /q %TEMP%\* >nul 2>&1"
+          } | Out-Null
+
+          # Health watchdog loop
+          $totalDuration = 21000
+          $runtime = 0
+          while ($runtime -lt $totalDuration) {
+              Start-Sleep -Seconds 60
+              $runtime += 60
+              $left = [math]::Round(($totalDuration - $runtime) / 60)
+              Write-Host "Watchdog active... Time slot remaining: $left min."
+          }
